@@ -1,7 +1,7 @@
 const {Board, Led} = require('johnny-five');
 
 const board = new Board({
-  port: '', // path to bluetooth connection, i.e. /dev/tty.ROBOT_NAME-SPPDev or COMX
+  port: '/dev/tty.orca-DevB', // path to bluetooth connection, i.e. /dev/tty.ROBOT_NAME-SPPDev or COMX
 });
 
 board.on('ready', () => {
