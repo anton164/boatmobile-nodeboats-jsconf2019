@@ -15,18 +15,51 @@ const socket = new Socket(server);
 app.use(express.static(path.join(__dirname, "app")));
 
 // Start the HTTP Server
-const port = process.env.PORT || 81;
+const port = process.env.PORT || 80;
 const listen = new Promise(resolve => {
   server.listen(port, resolve);
 });
 
 const board = new Board({
-  port: '/dev/tty.orca-DevB', // path to bluetooth connection, i.e. /dev/tty.ROBOT_NAME-SPPDev or COMX
+  port: '/dev/tty.clownfish-DevB', // path to bluetooth connection, i.e. /dev/tty.ROBOT_NAME-SPPDev or COMX
 });
 
 const STEP = 5;
-const MAX_FORCE = 5;
-const MAX_SPEED = 250;
+const MAX_SPEED = 500;
+
+function powerToSpeed (power) {
+  return power * (MAX_SPEED);
+}
+
+function speedFromJoystick (data) {
+
+  const degree = data.angle.degree;
+  let force = data.force;
+  if (force > 1) force = 1;
+  if (force < -1) force = -1;
+  let leftPower, rightPower;
+
+  if (degree < 90) {
+    leftPower = force;
+    rightPower = degree / 90 * force;
+  } else if (degree > 270) {
+    leftPower = -force;
+    rightPower = - ((1 - ((degree-270) / 90)) * force);
+  } else if (degree === 90) {
+    rightPower = force;
+    leftPower = force;
+  } else if (degree > 90) {
+    // rightPower 100%
+    rightPower = (degree > 180) ? -force : force;
+    leftPower = (1 - ((degree - 90) / 90)) * force;
+  }
+
+  return {
+    leftSpeed: powerToSpeed(leftPower),
+    rightSpeed: powerToSpeed(rightPower)
+  };
+}
+
 
 board.on('ready', () => {
   const led = new Led(13);
@@ -40,6 +73,7 @@ board.on('ready', () => {
   });
   let speed = 0;
   let last = null;
+  ESCNeutral = leftESC.neutral;
 
   function throttle (leftChange, rightChange) {
     console.log('Throttling ESCs');
@@ -54,29 +88,30 @@ board.on('ready', () => {
     throttle(ESCNeutral, ESCNeutral);
   }
 
-  function moveForward () {
-    throttle(ESCNeutral + 50, ESCNeutral + 50);
-  }
-
-  function forceToSpeed (force) {
-    return (force / MAX_FORCE) * (MAX_SPEED);
-  }
-
-  function throttleFromJoystick ({event, data}) {
-    if (event.type === 'end') {
+  // Code for controlling the two motors using the joystick web app
+  function throttleFromJoystick({data, event}) {
+    if (event.type === 'end') {
       stop();
     } else {
-      moveForward(forceToSpeed(force));
+      const { leftSpeed, rightSpeed } = speedFromJoystick(data);
+      throttle(ESCNeutral + leftSpeed, ESCNeutral + rightSpeed);
     }
   }
+
+  socket.on("connection", connection => {
+    console.log("ORCA: Controller Connected");
+    connection.on("remote-control", data => {
+      throttleFromJoystick(data);
+    });
+  });
 
   // just to make sure the program is running
   led.blink(500);
 
+  // Code for controlling the two motors using the arrow keys
   function controller(_, key) {
     let leftChange = 0;
     let rightChange = 0;
-    ESCNeutral = leftESC.neutral;
     if (key) {
       if (!key.shift) {
         leftChange = ESCNeutral;
@@ -127,20 +162,8 @@ board.on('ready', () => {
   process.stdin.setRawMode(true);
   process.stdin.resume();
 
-  socket.on("connection", connection => {
-    console.log("ORCA: Controller Connected");
-    connection.on("remote-control", data => {
-      throttleFromJoystick(data);
-    });
-  });
-
   listen.then(() => {
     console.log(`http://${os.hostname()}.local`);
-    try {
-      console.log(`http://${os.networkInterfaces().wlan0[0].address}`);
-    } catch (e) {
-      console.log(e);
-    }
     process.on("SIGINT", () => {
       server.close();
       process.exit();
@@ -150,6 +173,4 @@ board.on('ready', () => {
 
 board.on('error', error => {
   console.error(error);
-  process.exit(1);
-  server.close();
 });
